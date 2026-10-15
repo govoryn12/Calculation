@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Розрахунок цін</title>
+<style>
+  :root { --bg:#f6f5f2; --card:#fff; --text:#222; --muted:#6b6b6b; --line:#e2e0da; --accent:#2f6f4f; --input:#fff7c9; --input-line:#e6d56a; --res:#eaf4ee; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1b1c1b; --card:#262826; --text:#eee; --muted:#a0a0a0; --line:#3a3d3a; --accent:#6fbf92; --input:#4a4420; --input-line:#7a6e2a; --res:#25382d; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:820px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:8px 0 12px; }
+  h2 { font-size:17px; margin:20px 0 8px; }
+  .tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .tabs button { border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  section { display:none; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  section.active { display:block; }
+  .hint { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .row label, .row .l { flex:1; }
+  input[type=number], input[type=text] { width:130px; padding:6px 8px; border:1px solid var(--input-line); background:var(--input); color:var(--text); border-radius:6px; font:inherit; text-align:right; }
+  input[type=text] { text-align:left; width:220px; }
+  .val { min-width:130px; text-align:right; font-variant-numeric:tabular-nums; }
+  .total { font-weight:600; }
+  .final { background:var(--res); border-radius:8px; padding:6px 10px; margin-top:6px; font-weight:700; }
+  .final .val { color:var(--accent); font-size:17px; }
+  .pct { display:flex; align-items:center; gap:4px; } .pct span { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin:8px 0; font-size:14px; }
+  th, td { padding:5px 4px; border-bottom:1px solid var(--line); text-align:right; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  td input[type=number] { width:100%; min-width:70px; }
+  td.num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .tablewrap { overflow-x:auto; }
+  button.small { border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
+  button.small:hover { border-color:var(--accent); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:4px 0 12px; }
+  .seg button { border:0; background:var(--card); color:var(--text); padding:7px 12px; cursor:pointer; font:inherit; }
+  .seg button.active { background:var(--accent); color:#fff; }
+  .foot { margin-top:14px; display:flex; justify-content:space-between; color:var(--muted); font-size:12px; }
+  @media (max-width:520px){ .row { flex-wrap:wrap; } input[type=text]{ width:100%; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Розрахунок цін</h1>
+  <div class="tabs" id="tabs"></div>
+
+  <!-- ВИТРАТИ -->
+  <section id="tab-expenses">
+    <p class="hint">Жовті поля заповнюєте ви. Ці дані використовують усі інші вкладки.</p>
+    <h2>Загальні витрати за місяць, грн</h2>
+    <div id="exp-list"></div>
+    <div class="row total"><span class="l">Разом за місяць</span><span class="val" id="exp-total"></span></div>
+    <h2>Податки й комісії (відсоток від ціни)</h2>
+    <div id="tax-list"></div>
+    <div class="row total"><span class="l">П — разом</span><span class="val" id="tax-total"></span></div>
+  </section>
+
+  <!-- МАТЕРІАЛИ -->
+  <section id="tab-materials">
+    <p class="hint">Н = С × Націнка. Ціна без податків = (С + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П). Кожен рядок — окремий матеріал.</p>
+    <div id="mat-params"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Закупівля партії, грн</th><th>Доставка, грн</th><th>Придатних, шт</th><th>С — собівартість 1 шт</th><th>Н — загальні витрати</th><th>Маржа, грн</th><th>Ціна з податками</th><th>Ціна округлена</th><th></th></tr></thead>
+      <tbody id="mat-body"></tbody>
+    </table></div>
+    <button class="small" id="mat-add">+ Додати матеріал</button>
+  </section>
+
+  <!-- КОМПОЗИЦІЯ -->
+  <section id="tab-comp">
+    <div class="seg" id="comp-mode">
+      <button data-m="markup">Витрати за націнкою</button>
+      <button data-m="time">Витрати за часом роботи</button>
+    </div>
+    <p class="hint" id="comp-hint"></p>
+    <div class="row"><label class="l">Назва композиції</label><input type="text" id="comp-name"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Собівартість 1 шт, грн</th><th>Використано, шт</th><th>Сума</th><th></th></tr></thead>
+      <tbody id="comp-body"></tbody>
+    </table></div>
+    <button class="small" id="comp-add">+ Додати матеріал</button>
+    <div id="comp-params"></div>
+    <h2>Перевірка: що всередині округленої ціни</h2>
+    <div id="comp-check"></div>
+  </section>
+
+  <!-- ОРЕНДА -->
+  <section id="tab-rent">
+    <p class="hint">Ціна = База ÷ (1 − Маржа) ÷ (1 − П).</p>
+    <div id="rent-common"></div>
+    <h2>Варіант 1. Оренда композиції з видачею</h2>
+    <div id="rent-1"></div>
+    <h2>Варіант 2. Фотосесія в приміщенні (за годину)</h2>
+    <div id="rent-2"></div>
+  </section>
+
+  <div class="foot"><span>Дані зберігаються у вашому браузері.</span><a href="#" id="reset" style="color:inherit">Скинути до прикладу</a></div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const STORE = 'rozrahunok-tsin-v1';
+
+const DEFAULTS = {
+  expenses: [
+    ['Оренда приміщення', 10000], ['Комунальні послуги та електроенергія', 1500],
+    ["Інтернет і зв'язок", 0], ['Реклама', 0], ['ЄСВ', 1902.34], ['ПРРО', 368],
+    ['Інструменти та обладнання', 0], ['Інше', 0]
+  ].map(([n, v]) => ({ n, v })),
+  taxes: [
+    ['Єдиний податок (3 група, без ПДВ)', 5], ['Військовий збір (3 група)', 1],
+    ['Еквайринг (тариф вашого банку)', 1.3], ['Комісія маркетплейсу / інше', 0]
+  ].map(([n, v]) => ({ n, v })),   // у відсотках
+  mat: { markup: 50, round: 1, margin: 35,
+    rows: [{ p: 1500, d: 120, q: 50 }, { p: 2400, d: 150, q: 40 }, { p: 900, d: 80, q: 30 }] },
+  comp: { mode: 'markup', name: 'Композиція (приклад)',
+    rows: [{ c: 32.4, q: 5 }, { c: 160, q: 1 }, { c: 4, q: 2 }],
+    small: 20, pack: 30, waste: 5, markup: 50, margin: 35, round: 10, hours: 100, time: 1.5 },
+  rent: { margin: 40, cost: 1000, wear: 10, over: 5, round1: 10,
+    base: 300, power: 20, util: 30, round2: 10, dur: 2 }
+};
+
+let S = load();
+function load() {
+  try { const s = JSON.parse(localStorage.getItem(STORE)); if (s) return s; } catch (e) {}
+  return JSON.parse(JSON.stringify(DEFAULTS));
+}
+function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) {} }
+
+// ---------- helpers ----------
+const num = v => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : 0; };
+const ceil = (x, step) => step > 0 ? Math.ceil(x / step - 1e-9) * step : x;   // як CEILING в Excel
+const fmt = x => isFinite(x) ? x.toLocaleString('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+const fmtP = x => x.toLocaleString('uk-UA', { maximumFractionDigits: 2 }) + ' %';
+const div = (a, b) => b ? a / b : NaN;
+
+function numInput(value, onChange, opts = {}) {
+  const i = document.createElement('input');
+  i.type = 'number'; i.step = opts.step || 'any'; i.value = value; i.inputMode = 'decimal';
+  i.addEventListener('input', () => { onChange(num(i.value)); save(); update(); });
+  return i;
+}
+function fieldRow(container, label, value, onChange, pct) {
+  const r = document.createElement('div'); r.className = 'row';
+  const l = document.createElement('label'); l.className = 'l'; l.textContent = label;
+  const w = document.createElement('span'); w.className = 'pct';
+  w.appendChild(numInput(value, onChange));
+  if (pct) { const s = document.createElement('span'); s.textContent = '%'; w.appendChild(s); }
+  r.append(l, w); container.appendChild(r);
+}
+function calcRow(container, label, id, cls = '') {
+  const r = document.createElement('div'); r.className = 'row ' + cls;
+  r.innerHTML = `<span class="l">${label}</span><span class="val" id="${id}"></span>`;
+  container.appendChild(r);
+}
+const set = (id, text) => { $('#' + id).textContent = text; };
+
+// ---------- tabs ----------
+const TABS = [['expenses', 'Витрати'], ['materials', 'Матеріали'], ['comp', 'Композиція'], ['rent', 'Оренда']];
+function showTab(id) {
+  TABS.forEach(([k]) => {
+    $('#tab-' + k).classList.toggle('active', k === id);
+    $('#tabs [data-t="' + k + '"]').classList.toggle('active', k === id);
+  });
+  try { sessionStorage.setItem('tab', id); } catch (e) {}
+}
+TABS.forEach(([k, name]) => {
+  const b = document.createElement('button'); b.textContent = name; b.dataset.t = k;
+  b.onclick = () => showTab(k); $('#tabs').appendChild(b);
+});
+
+// ---------- core model ----------
+const totalExpenses = () => S.expenses.reduce((a, e) => a + e.v, 0);
+const totalTax = () => S.taxes.reduce((a, e) => a + e.v, 0) / 100;   // П як частка
+
+// ---------- build static inputs ----------
+function buildExpenses() {
+  S.expenses.forEach(e => fieldRow($('#exp-list'), e.n, e.v, v => e.v = v));
+  S.taxes.forEach(e => fieldRow($('#tax-list'), e.n, e.v, v => e.v = v, true));
+}
+
+function buildMatParams() {
+  const c = $('#mat-params');
+  fieldRow(c, 'Націнка на загальні витрати, % від собівартості', S.mat.markup, v => S.mat.markup = v, true);
+  fieldRow(c, 'Маржа, % від ціни без податків', S.mat.margin, v => S.mat.margin = v, true);
+  fieldRow(c, 'Округлювати ціну вгору до, грн', S.mat.round, v => S.mat.round = v);
+  calcRow(c, 'П — податки й комісії', 'mat-p');
+}
+function buildMatRows() {
+  const tb = $('#mat-body'); tb.innerHTML = '';
+  S.mat.rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    [['p'], ['d'], ['q']].forEach(([k]) => {
+      const td = document.createElement('td'); td.appendChild(numInput(r[k], v => r[k] = v)); tr.appendChild(td);
+    });
+    ['c', 'n', 'm', 'g', 'h'].forEach(k => { const td = document.createElement('td'); td.className = 'num'; td.dataset.k = k; tr.appendChild(td); });
+    const td = document.createElement('td');
+    const del = document.createElement('button'); del.className = 'small'; del.textContent = '×'; del.title = 'Видалити';
+    del.onclick = () => { S.mat.rows.splice(i, 1); save(); buildMatRows(); update(); };
+    td.appendChild(del); tr.appendChild(td);
+    tb.appendChild(tr);
+  });
+}
+$('#mat-add').onclick = () => {
+  const l = S.mat.rows[S.mat.rows.length - 1] || { p: 0, d: 0, q: 1 };
+  S.mat.rows.push({ ...l }); save(); buildMatRows(); update();
+};
+
+function buildCompRows() {
+  const tb = $('#comp-body'); tb.innerHTML = '';
+  S.comp.rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    ['c', 'q'].forEach(k => { const td = document.createElement('td'); td.appendChild(numInput(r[k], v => r[k] = v)); tr.appendChild(td); });
+    const s = document.createElement('td'); s.className = 'num'; s.dataset.k = 's'; tr.appendChild(s);
+    const td = document.createElement('td');
+    const del = document.createElement('button'); del.className = 'small'; del.textContent = '×';
+    del.onclick = () => { S.comp.rows.splice(i, 1); save(); buildCompRows(); update(); };
+    td.appendChild(del); tr.appendChild(td);
+    tb.appendChild(tr);
+  });
+}
+$('#comp-add').onclick = () => { S.comp.rows.push({ c: 0, q: 1 }); save(); buildCompRows(); update(); };
+$('#comp-name').oninput = e => { S.comp.name = e.target.value; save(); };
+
+function buildCompParams() {
+  const c = $('#comp-params'); c.innerHTML = '';
+  const m = S.comp;
+  calcRow(c, 'Матеріали разом', 'c-mat', 'total');
+  fieldRow(c, 'Дрібні витратні (клей, тейп, губка, дріт) на 1 композицію, грн', m.small, v => m.small = v);
+  fieldRow(c, 'Пакування (коробка, плівка, листівка), грн', m.pack, v => m.pack = v);
+  fieldRow(c, 'Брак і обрізки, % від матеріалів', m.waste, v => m.waste = v, true);
+  calcRow(c, 'М — матеріали з усім', 'c-m', 'total');
+  if (m.mode === 'markup') {
+    fieldRow(c, 'Націнка на загальні витрати, % від собівартості', m.markup, v => m.markup = v, true);
+  } else {
+    fieldRow(c, 'Годин роботи над композиціями за місяць', m.hours, v => m.hours = v);
+    calcRow(c, 'Вартість години (загальні витрати ÷ години)', 'c-hour');
+    fieldRow(c, 'Час на цю композицію, год', m.time, v => m.time = v);
+  }
+  calcRow(c, 'Н — загальні витрати на 1 композицію', 'c-n', 'total');
+  fieldRow(c, 'Маржа, % від ціни без податків', m.margin, v => m.margin = v, true);
+  calcRow(c, 'П — податки й комісії', 'c-p');
+  fieldRow(c, 'Округлювати ціну вгору до, грн', m.round, v => m.round = v);
+  calcRow(c, 'Маржа, грн', 'c-marg');
+  calcRow(c, 'Ціна з податками й комісіями', 'c-price');
+  calcRow(c, 'Ціна округлена', 'c-final', 'final');
+  const k = $('#comp-check'); k.innerHTML = '';
+  calcRow(k, 'Матеріали', 'k-mat'); calcRow(k, 'Загальні витрати', 'k-over');
+  calcRow(k, 'Податки й комісії', 'k-tax'); calcRow(k, 'Ваш дохід', 'k-inc', 'total');
+}
+function setCompMode(mode) {
+  S.comp.mode = mode; save();
+  document.querySelectorAll('#comp-mode button').forEach(b => b.classList.toggle('active', b.dataset.m === mode));
+  $('#comp-hint').textContent = mode === 'markup'
+    ? 'Н = М × Націнка на загальні витрати. Ціна без податків = (М + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П).'
+    : 'Н = Години на композицію × Вартість години. Ціна без податків = (М + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П).';
+  buildCompParams(); update();
+}
+document.querySelectorAll('#comp-mode button').forEach(b => b.onclick = () => setCompMode(b.dataset.m));
+
+function buildRent() {
+  const R = S.rent;
+  const c = $('#rent-common');
+  fieldRow(c, 'Маржа для оренди, % від ціни без податків', R.margin, v => R.margin = v, true);
+  calcRow(c, 'П — податки й комісії', 'r-p');
+  const a = $('#rent-1');
+  fieldRow(a, 'Вартість композиції, грн', R.cost, v => R.cost = v);
+  fieldRow(a, 'Відсоток на знос (рекомендовано 10–20%)', R.wear, v => R.wear = v, true);
+  fieldRow(a, 'Відсоток на загальні витрати (рекомендовано 5–10%)', R.over, v => R.over = v, true);
+  calcRow(a, 'База = Вартість × (Знос + Загальні витрати)', 'r1-base');
+  fieldRow(a, 'Округлювати ціну вгору до, грн', R.round1, v => R.round1 = v);
+  calcRow(a, 'Ціна без податків = База ÷ (1 − Маржа)', 'r1-net');
+  calcRow(a, 'Маржа, грн', 'r1-marg');
+  calcRow(a, 'Ціна оренди з податками й комісіями', 'r1-price');
+  calcRow(a, 'Ціна оренди округлена', 'r1-final', 'final');
+  calcRow(a, 'Застава (повна вартість композиції)', 'r1-dep', 'total');
+  const b = $('#rent-2');
+  fieldRow(b, 'Базова сума за годину, грн', R.base, v => R.base = v);
+  fieldRow(b, 'Додаткова електроенергія за годину, грн', R.power, v => R.power = v);
+  fieldRow(b, 'Додаткові комунальні, прибирання за годину, грн', R.util, v => R.util = v);
+  calcRow(b, 'Разом за годину', 'r2-sum', 'total');
+  fieldRow(b, 'Округлювати ціну вгору до, грн', R.round2, v => R.round2 = v);
+  calcRow(b, 'Ціна без податків = Разом ÷ (1 − Маржа)', 'r2-net');
+  calcRow(b, 'Маржа, грн', 'r2-marg');
+  calcRow(b, 'Ціна за годину з податками й комісіями', 'r2-price');
+  calcRow(b, 'Ціна за годину округлена', 'r2-hour', 'total');
+  fieldRow(b, 'Тривалість фотосесії, год', R.dur, v => R.dur = v);
+  calcRow(b, 'Ціна фотосесії', 'r2-final', 'final');
+}
+
+// ---------- recalculation ----------
+function update() {
+  const P = totalTax(), E = totalExpenses();
+  set('exp-total', fmt(E)); set('tax-total', fmtP(P * 100));
+
+  // Матеріали
+  const M = S.mat, mk = M.markup / 100, mg = M.margin / 100;
+  set('mat-p', fmtP(P * 100));
+  document.querySelectorAll('#mat-body tr').forEach((tr, i) => {
+    const r = M.rows[i]; if (!r) return;
+    const C = div(r.p + r.d, r.q), N = C * mk, base = C + N;
+    const marg = base / (1 - mg) - base, G = (base + marg) / (1 - P), H = ceil(G, M.round);
+    const vals = { c: C, n: N, m: marg, g: G, h: H };
+    for (const k in vals) { const td = $('[data-k="' + k + '"]', tr); td.textContent = fmt(vals[k]); if (k === 'h') td.style.fontWeight = 700; }
+  });
+
+  // Композиція
+  const C = S.comp;
+  let mats = 0;
+  document.querySelectorAll('#comp-body tr').forEach((tr, i) => {
+    const r = C.rows[i]; if (!r) return;
+    const s = r.c * r.q; mats += s; $('[data-k="s"]', tr).textContent = fmt(s);
+  });
+  const Mw = (mats + C.small + C.pack) * (1 + C.waste / 100);
+  let N;
+  if (C.mode === 'markup') N = Mw * C.markup / 100;
+  else { const hour = div(E, C.hours); set('c-hour', fmt(hour)); N = C.time * hour; }
+  const cm = C.margin / 100, cmarg = (Mw + N) / (1 - cm) - (Mw + N);
+  const cprice = (Mw + N + cmarg) / (1 - P), cfinal = ceil(cprice, C.round);
+  set('c-mat', fmt(mats)); set('c-m', fmt(Mw)); set('c-n', fmt(N)); set('c-p', fmtP(P * 100));
+  set('c-marg', fmt(cmarg)); set('c-price', fmt(cprice)); set('c-final', fmt(cfinal) + ' грн');
+  set('k-mat', fmt(Mw)); set('k-over', fmt(N)); set('k-tax', fmt(cfinal * P));
+  set('k-inc', fmt(cfinal - Mw - N - cfinal * P));
+
+  // Оренда
+  const R = S.rent, rm = R.margin / 100;
+  set('r-p', fmtP(P * 100));
+  const base1 = R.cost * (R.wear + R.over) / 100, net1 = base1 / (1 - rm), price1 = net1 / (1 - P);
+  set('r1-base', fmt(base1)); set('r1-net', fmt(net1)); set('r1-marg', fmt(net1 - base1));
+  set('r1-price', fmt(price1)); set('r1-final', fmt(ceil(price1, R.round1)) + ' грн'); set('r1-dep', fmt(R.cost));
+  const sum2 = R.base + R.power + R.util, net2 = sum2 / (1 - rm), price2 = net2 / (1 - P), hour2 = ceil(price2, R.round2);
+  set('r2-sum', fmt(sum2)); set('r2-net', fmt(net2)); set('r2-marg', fmt(net2 - sum2));
+  set('r2-price', fmt(price2)); set('r2-hour', fmt(hour2)); set('r2-final', fmt(hour2 * R.dur) + ' грн');
+}
+
+// ---------- init ----------
+buildExpenses(); buildMatParams(); buildMatRows(); buildCompRows(); buildRent();
+$('#comp-name').value = S.comp.name;
+setCompMode(S.comp.mode);
+let t = 'expenses'; try { t = sessionStorage.getItem('tab') || t; } catch (e) {}
+showTab(t);
+$('#reset').onclick = e => {
+  e.preventDefault();
+  if (!confirm('Скинути всі дані до прикладу?')) return;
+  try { localStorage.removeItem(STORE); } catch (x) {}
+  location.reload();
+};
+</script>
+</body>
+</html>
