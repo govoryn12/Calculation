@@ -42,12 +42,24 @@
   .seg button { border:0; background:var(--card); color:var(--text); padding:7px 12px; cursor:pointer; font:inherit; }
   .seg button.active { background:var(--accent); color:#fff; }
   .foot { margin-top:14px; display:flex; justify-content:space-between; color:var(--muted); font-size:12px; }
+  #report { display:none; }
+  .top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .top button { border:0; background:var(--accent); color:#fff; padding:9px 16px; border-radius:8px; cursor:pointer; font:inherit; }
+  #report h1 { font-size:20px; } #report h2 { font-size:15px; margin:18px 0 6px; border-bottom:1px solid #999; padding-bottom:3px; }
+  #report table { font-size:12px; } #report th, #report td { text-align:left; padding:4px 6px; border-bottom:1px solid #ccc; }
+  #report td.r, #report th.r { text-align:right; }
+  @media print {
+    @page { margin:14mm; }
+    body { background:#fff; color:#000; }
+    .wrap { display:none; }
+    #report { display:block; color:#000; font-size:12px; }
+  }
   @media (max-width:520px){ .row { flex-wrap:wrap; } input[type=text]{ width:100%; } }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Розрахунок цін</h1>
+  <div class="top"><h1>Розрахунок цін</h1><button id="pdf">Зберегти як PDF</button></div>
   <div class="tabs" id="tabs"></div>
 
   <!-- ВИТРАТИ -->
@@ -102,6 +114,7 @@
 
   <div class="foot"><span>Дані зберігаються у вашому браузері.</span><a href="#" id="reset" style="color:inherit">Скинути до прикладу</a></div>
 </div>
+<div id="report"></div>
 
 <script>
 const $ = (s, r = document) => r.querySelector(s);
@@ -338,6 +351,47 @@ function update() {
   set('r2-sum', fmt(sum2)); set('r2-net', fmt(net2)); set('r2-marg', fmt(net2 - sum2));
   set('r2-price', fmt(price2)); set('r2-hour', fmt(hour2)); set('r2-final', fmt(hour2 * R.dur) + ' грн');
 }
+
+// ---------- PDF (друк у PDF) ----------
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function buildReport() {
+  const P = totalTax(), E = totalExpenses(), M = S.mat, C = S.comp, R = S.rent;
+  const kv = rows => '<table>' + rows.map(([k, v, b]) => `<tr><td>${esc(k)}</td><td class="r"${b ? ' style="font-weight:700"' : ''}>${v}</td></tr>`).join('') + '</table>';
+
+  const matRows = M.rows.map((r, i) => {
+    const c = div(r.p + r.d, r.q), base = c * (1 + M.markup / 100), mg = M.margin / 100;
+    const g = base / (1 - mg) / (1 - P);
+    return `<tr><td>${i + 1}</td><td class="r">${fmt(r.p)}</td><td class="r">${fmt(r.d)}</td><td class="r">${r.q}</td><td class="r">${fmt(c)}</td><td class="r">${fmt(g)}</td><td class="r"><b>${fmt(ceil(g, M.round))}</b></td></tr>`;
+  }).join('');
+
+  const mats = C.rows.reduce((a, r) => a + r.c * r.q, 0);
+  const Mw = (mats + C.small + C.pack) * (1 + C.waste / 100);
+  const N = C.mode === 'markup' ? Mw * C.markup / 100 : C.time * div(E, C.hours);
+  const cg = (Mw + N) / (1 - C.margin / 100) / (1 - P), cf = ceil(cg, C.round);
+  const compRows = C.rows.map(r => `<tr><td>${fmt(r.c)}</td><td class="r">${r.q}</td><td class="r">${fmt(r.c * r.q)}</td></tr>`).join('');
+
+  const rm = R.margin / 100, b1 = R.cost * (R.wear + R.over) / 100, p1 = b1 / (1 - rm) / (1 - P);
+  const s2 = R.base + R.power + R.util, h2 = ceil(s2 / (1 - rm) / (1 - P), R.round2);
+
+  $('#report').innerHTML = `
+    <h1>Розрахунок цін</h1><div>${new Date().toLocaleDateString('uk-UA')}</div>
+    <h2>Витрати і податки</h2>
+    ${kv([['Загальні витрати за місяць', fmt(E)], ['П — податки й комісії разом', fmtP(P * 100)]])}
+    <h2>Матеріали (націнка ${fmtP(M.markup)}, маржа ${fmtP(M.margin)})</h2>
+    <table><tr><th>№</th><th class="r">Закупівля</th><th class="r">Доставка</th><th class="r">Шт</th><th class="r">Собівартість 1 шт</th><th class="r">Ціна з податками</th><th class="r">Ціна округлена</th></tr>${matRows}</table>
+    <h2>Композиція: ${esc(C.name)} (${C.mode === 'markup' ? 'витрати за націнкою' : 'витрати за часом роботи'})</h2>
+    <table><tr><th>Собівартість 1 шт</th><th class="r">Використано, шт</th><th class="r">Сума</th></tr>${compRows}</table>
+    ${kv([
+      ['Матеріали разом', fmt(mats)], ['Дрібні витратні', fmt(C.small)], ['Пакування', fmt(C.pack)],
+      ['Брак і обрізки', fmtP(C.waste)], ['М — матеріали з усім', fmt(Mw)], ['Н — загальні витрати', fmt(N)],
+      ['Маржа', fmtP(C.margin)], ['Ціна з податками й комісіями', fmt(cg)], ['Ціна округлена', fmt(cf) + ' грн', true],
+      ['Всередині ціни: податки й комісії', fmt(cf * P)], ['Ваш дохід', fmt(cf - Mw - N - cf * P)]])}
+    <h2>Оренда (маржа ${fmtP(R.margin)})</h2>
+    ${kv([
+      ['Оренда композиції з видачею', fmt(ceil(p1, R.round1)) + ' грн', true], ['Застава', fmt(R.cost) + ' грн'],
+      ['Фотосесія, за годину', fmt(h2) + ' грн'], ['Фотосесія, ' + R.dur + ' год', fmt(h2 * R.dur) + ' грн', true]])}`;
+}
+$('#pdf').onclick = () => { buildReport(); window.print(); };
 
 // ---------- init ----------
 buildExpenses(); buildMatParams(); buildMatRows(); buildCompRows(); buildRent();
