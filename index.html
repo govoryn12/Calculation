@@ -83,7 +83,7 @@
     <p class="hint">Н = С × Націнка. Ціна без податків = (С + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П). Кожен рядок — окремий матеріал.</p>
     <div id="mat-params"></div>
     <div class="tablewrap"><table>
-      <thead><tr><th>Назва</th><th>Закупівля партії, грн</th><th>Доставка, грн</th><th>Придатних, шт</th><th>С — собівартість 1 шт</th><th>Н — загальні витрати</th><th>Маржа, грн</th><th>Ціна з податками</th><th>Ціна округлена</th><th></th></tr></thead>
+      <thead><tr><th>Назва</th><th>Закупівля партії, грн</th><th>Доставка (розподіляється автоматично), грн</th><th>Придатних, шт</th><th>С — собівартість 1 шт</th><th>Н — загальні витрати</th><th>Маржа, грн</th><th>Ціна з податками</th><th>Ціна округлена</th><th></th></tr></thead>
       <tbody id="mat-body"></tbody>
     </table></div>
     <button class="small" id="mat-add">+ Додати матеріал</button>
@@ -150,19 +150,20 @@ const DEFAULTS = {
     markup: 50,   // націнка на загальні витрати, % від собівартості
     margin: 35,   // маржа, % від ціни без податків
     round: 1,     // округлювати ціну вгору до, грн
-    rows: [       // n — назва (необов'язкова), p — закупівля партії, d — доставка, q — придатних до продажу, шт
-      { n: '', p: 1500, d: 120, q: 50 },
-      { n: '', p: 2400, d: 150, q: 40 },
-      { n: '', p: 900,  d: 80,  q: 30 }
+    delivery: 350, // доставка за всю поставку, грн (розподіляється між матеріалами пропорційно закупівлі)
+    rows: [       // n — назва (необов'язкова), p — закупівля партії, q — придатних до продажу, шт
+      { n: 'Троянда штучна', p: 1500, q: 50 },
+      { n: 'Півонія штучна', p: 2400, q: 40 },
+      { n: 'Евкаліпт гілка', p: 900,  q: 30 }
     ]
   },
   // Композиція
   comp: {
     name: 'Композиція (приклад)',
     rows: [                          // n — назва (необов'язкова), c — собівартість 1 шт, q — використано, шт
-      { n: '', c: 32.4, q: 5 },
-      { n: '', c: 160,  q: 1 },
-      { n: '', c: 4,    q: 2 }
+      { n: 'Троянда штучна', c: 32.4, q: 5 },
+      { n: 'Кашпо',          c: 160,  q: 1 },
+      { n: 'Стрічка, метр',  c: 4,    q: 2 }
     ],
     small: 20,    // дрібні витратні на 1 композицію, грн
     pack: 30,     // пакування, грн
@@ -194,6 +195,7 @@ const STORE = 'rozrahunok-tsin-v1';
 
 
 let S = load();
+if (S.mat.delivery == null) S.mat.delivery = DEFAULTS.mat.delivery;
 if (S.comp.rate == null) S.comp.rate = DEFAULTS.comp.rate;   // міграція зі старих збережених даних
 function load() {
   try { const s = JSON.parse(localStorage.getItem(STORE)); if (s) return s; } catch (e) {}
@@ -256,6 +258,8 @@ TABS.forEach(([k, name]) => {
 });
 
 // ---------- core model ----------
+// доставка за всю поставку розподіляється між матеріалами пропорційно сумі закупівлі
+const matDelivery = r => { const sum = S.mat.rows.reduce((a, x) => a + x.p, 0); return sum ? r.p / sum * S.mat.delivery : 0; };
 const totalExpenses = () => S.expenses.reduce((a, e) => a + e.v, 0);
 const totalTax = () => S.taxes.reduce((a, e) => a + e.v, 0) / 100;   // П як частка
 
@@ -271,14 +275,17 @@ function buildMatParams() {
   fieldRow(c, 'Маржа, % від ціни без податків', S.mat.margin, v => S.mat.margin = v, '%');
   fieldRow(c, 'Округлювати ціну вгору до, грн', S.mat.round, v => S.mat.round = v, 'грн');
   calcRow(c, 'П — податки й комісії', 'mat-p');
+  fieldRow(c, 'Доставка за всю поставку, грн', S.mat.delivery, v => S.mat.delivery = v, 'грн');
 }
 function buildMatRows() {
   const tb = $('#mat-body'); tb.innerHTML = '';
   S.mat.rows.forEach((r, i) => {
     const tr = document.createElement('tr');
     { const td = document.createElement('td'); td.appendChild(nameCell(r, i)); tr.appendChild(td); }
-    [['p', 'грн'], ['d', 'грн'], ['q', 'шт']].forEach(([k, u]) => {
-      const td = document.createElement('td'); td.appendChild(unitCell(r[k], v => r[k] = v, u)); tr.appendChild(td);
+    [['p', 'грн'], ['dl'], ['q', 'шт']].forEach(([k, u]) => {
+      const td = document.createElement('td');
+      if (u) td.appendChild(unitCell(r[k], v => r[k] = v, u)); else { td.className = 'num'; td.dataset.k = k; }
+      tr.appendChild(td);
     });
     ['c', 'n', 'm', 'g', 'h'].forEach(k => { const td = document.createElement('td'); td.className = 'num'; td.dataset.k = k; tr.appendChild(td); });
     const td = document.createElement('td');
@@ -289,7 +296,7 @@ function buildMatRows() {
   });
 }
 $('#mat-add').onclick = () => {
-  const l = S.mat.rows[S.mat.rows.length - 1] || { p: 0, d: 0, q: 1 };
+  const l = S.mat.rows[S.mat.rows.length - 1] || { p: 0, q: 1 };
   S.mat.rows.push({ ...l, n: '' }); save(); buildMatRows(); update();
 };
 
@@ -375,9 +382,9 @@ function update() {
   set('mat-p', fmtN(P * 100));
   document.querySelectorAll('#mat-body tr').forEach((tr, i) => {
     const r = M.rows[i]; if (!r) return;
-    const C = div(r.p + r.d, r.q), N = C * mk, base = C + N;
+    const D = matDelivery(r), C = div(r.p + D, r.q), N = C * mk, base = C + N;
     const marg = base / (1 - mg) - base, G = (base + marg) / (1 - P), H = ceil(G, M.round);
-    const vals = { c: C, n: N, m: marg, g: G, h: H };
+    const vals = { dl: D, c: C, n: N, m: marg, g: G, h: H };
     for (const k in vals) { const td = $('[data-k="' + k + '"]', tr); td.textContent = fmt(vals[k]); if (k === 'h') td.style.fontWeight = 700; }
   });
 
@@ -417,9 +424,9 @@ function buildReport(parts = ['mat', 'comp', 'rent']) {
   const kv = rows => '<table>' + rows.map(withUnit).map(([k, v, b]) => `<tr><td>${esc(k)}</td><td class="r"${b ? ' style="font-weight:700"' : ''}>${v}</td></tr>`).join('') + '</table>';
 
   const matRows = M.rows.map((r, i) => {
-    const c = div(r.p + r.d, r.q), base = c * (1 + M.markup / 100), mg = M.margin / 100;
+    const dd = matDelivery(r), c = div(r.p + dd, r.q), base = c * (1 + M.markup / 100), mg = M.margin / 100;
     const g = base / (1 - mg) / (1 - P);
-    return `<tr><td>${i + 1}</td><td>${esc(r.n || '')}</td><td class="r">${fmt(r.p)}</td><td class="r">${fmt(r.d)}</td><td class="r">${r.q}</td><td class="r">${fmt(c)}</td><td class="r">${fmt(g)}</td><td class="r"><b>${fmt(ceil(g, M.round))}</b></td></tr>`;
+    return `<tr><td>${i + 1}</td><td>${esc(r.n || '')}</td><td class="r">${fmt(r.p)}</td><td class="r">${fmt(dd)}</td><td class="r">${r.q}</td><td class="r">${fmt(c)}</td><td class="r">${fmt(g)}</td><td class="r"><b>${fmt(ceil(g, M.round))}</b></td></tr>`;
   }).join('');
 
   const mats = C.rows.reduce((a, r) => a + r.c * r.q, 0);
@@ -441,8 +448,8 @@ function buildReport(parts = ['mat', 'comp', 'rent']) {
 `;
   const sec = {
     mat: `
-    <h2>Матеріали (націнка ${fmtP(M.markup)}, маржа ${fmtP(M.margin)})</h2>
-    <table><tr><th>№</th><th>Назва</th><th class="r">Закупівля, грн</th><th class="r">Доставка, грн</th><th class="r">Придатних, шт</th><th class="r">Собівартість 1 шт, грн</th><th class="r">Ціна з податками, грн</th><th class="r">Ціна округлена, грн</th></tr>${matRows}</table>
+    <h2>Матеріали (націнка ${fmtP(M.markup)}, маржа ${fmtP(M.margin)}, доставка за всю поставку ${fmt(M.delivery)} грн)</h2>
+    <table><tr><th>№</th><th>Назва</th><th class="r">Закупівля, грн</th><th class="r">Доставка (розподілена), грн</th><th class="r">Придатних, шт</th><th class="r">Собівартість 1 шт, грн</th><th class="r">Ціна з податками, грн</th><th class="r">Ціна округлена, грн</th></tr>${matRows}</table>
 `,
     comp: `
     <h2>Композиція: ${esc(C.name)}</h2>
@@ -481,7 +488,7 @@ const COPY_PARTS = { exp: [], mat: ['mat'], comp: ['comp'], rent: ['rent'] };
 function reportText() {
   const lines = [];
   for (const el of $('#report').children) {
-    if (el.tagName === 'H2') { if (lines.length) lines.push(''); lines.push(el.textContent); }
+    if (el.tagName === 'H2') { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); lines.push(el.textContent); }
     else if (el.tagName === 'TABLE') {
       const rows = [...el.rows].map(tr => [...tr.cells].map(c => c.textContent));
       if (el.rows[0].cells[0].tagName === 'TH') {
@@ -491,27 +498,21 @@ function reportText() {
           const pairs = r.map((v, k) => [head[k], v]).filter(([h]) => h !== '№' && h !== 'Назва').map(([h, v]) => h + ': ' + v);
           const name = ni >= 0 ? r[ni].trim() : '';
           lines.push(name || 'Матеріал ' + (numbered ? r[0] : i + 1), ...pairs);
-          if (i < rows.length - 2) lines.push('');
+          lines.push('');
         });
-      } else rows.forEach(r => lines.push(r.join('\t')));
+      } else rows.forEach(r => lines.push(r.join(': ')));
     }
   }
   return lines.join('\n');
 }
 async function copyReport(key, btn) {
+  // копіюємо лише звичайний текст: у HTML-вигляді редактори й месенджери розбивають таблиці
+  // на окремі блоки (спочатку всі заголовки, потім усі значення)
   buildReport(COPY_PARTS[key]);
-  const root = $('#report'), text = reportText();
-  root.querySelector('h1').remove(); root.querySelector('div').remove();
-  const html = root.innerHTML;
+  const text = reportText();
   let ok = false;
   try {
-    if (navigator.clipboard && window.ClipboardItem) {
-      await navigator.clipboard.write([new ClipboardItem({
-        'text/plain': new Blob([text], { type: 'text/plain' }),
-        'text/html': new Blob([html], { type: 'text/html' })
-      })]);
-      ok = true;
-    } else if (navigator.clipboard) { await navigator.clipboard.writeText(text); ok = true; }
+    if (navigator.clipboard) { await navigator.clipboard.writeText(text); ok = true; }
   } catch (e) {}
   if (!ok) {
     const t = document.createElement('textarea'); t.value = text; t.style.cssText = 'position:fixed;opacity:0';
