@@ -33,7 +33,7 @@
   .total { font-weight:600; }
   .final { background:var(--res); border-radius:8px; padding:6px 10px; margin-top:6px; font-weight:700; }
   .final .val { color:var(--accent); font-size:17px; }
-  .pct { display:flex; align-items:center; gap:4px; } .pct span { color:var(--muted); }
+  .pct { display:flex; align-items:center; gap:4px; } .pct .u { color:var(--muted); white-space:nowrap; min-width:2.4em; }
   table { width:100%; border-collapse:collapse; margin:8px 0; font-size:14px; }
   th, td { padding:5px 4px; border-bottom:1px solid var(--line); text-align:right; }
   th { font-size:12px; color:var(--muted); font-weight:600; }
@@ -71,10 +71,10 @@
     <p class="hint">Жовті поля заповнюєте ви. Ці дані використовують усі інші вкладки.</p>
     <h2>Загальні витрати за місяць, грн</h2>
     <div id="exp-list"></div>
-    <div class="row total"><span class="l">Разом за місяць</span><span class="val" id="exp-total"></span></div>
+    <div class="row total"><span class="l">Разом за місяць, грн</span><span class="val" id="exp-total"></span></div>
     <h2>Податки й комісії (відсоток від ціни)</h2>
     <div id="tax-list"></div>
-    <div class="row total"><span class="l">П — разом</span><span class="val" id="tax-total"></span></div>
+    <div class="row total"><span class="l">П — разом, %</span><span class="val" id="tax-total"></span></div>
   </section>
 
   <!-- МАТЕРІАЛИ -->
@@ -90,11 +90,7 @@
 
   <!-- КОМПОЗИЦІЯ -->
   <section id="tab-comp">
-    <div class="seg" id="comp-mode">
-      <button data-m="markup">Витрати за націнкою</button>
-      <button data-m="time">Витрати за часом роботи</button>
-    </div>
-    <p class="hint" id="comp-hint"></p>
+    <p class="hint">Собівартість = М + Ціна за годину × Час. Н = М × Націнка. Ціна без податків = (Собівартість + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П).</p>
     <div class="row"><label class="l">Назва композиції</label><input type="text" id="comp-name"></div>
     <div class="tablewrap"><table>
       <thead><tr><th>Собівартість 1 шт, грн</th><th>Використано, шт</th><th>Сума</th><th></th></tr></thead>
@@ -158,7 +154,6 @@ const DEFAULTS = {
   },
   // Композиція
   comp: {
-    mode: 'markup',                  // 'markup' — витрати за націнкою, 'time' — за часом роботи
     name: 'Композиція (приклад)',
     rows: [                          // c — собівартість 1 шт, q — використано, шт
       { c: 32.4, q: 5 },
@@ -168,9 +163,9 @@ const DEFAULTS = {
     small: 20,    // дрібні витратні на 1 композицію, грн
     pack: 30,     // пакування, грн
     waste: 5,     // брак і обрізки, % від матеріалів
-    markup: 50,   // націнка на загальні витрати, %
-    hours: 100,   // годин роботи за місяць (режим «за часом»)
-    time: 1.5,    // годин на цю композицію (режим «за часом»)
+    rate: 150,    // ціна за годину роботи, грн
+    time: 1.5,    // годин на цю композицію
+    markup: 50,   // націнка на загальні витрати, % від матеріалів
     margin: 35,   // маржа, %
     round: 10     // округлювати вгору до, грн
   },
@@ -195,6 +190,7 @@ const STORE = 'rozrahunok-tsin-v1';
 
 
 let S = load();
+if (S.comp.rate == null) S.comp.rate = DEFAULTS.comp.rate;   // міграція зі старих збережених даних
 function load() {
   try { const s = JSON.parse(localStorage.getItem(STORE)); if (s) return s; } catch (e) {}
   return JSON.parse(JSON.stringify(DEFAULTS));
@@ -205,6 +201,7 @@ function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch 
 const num = v => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : 0; };
 const ceil = (x, step) => step > 0 ? Math.ceil(x / step - 1e-9) * step : x;   // як CEILING в Excel
 const fmt = x => isFinite(x) ? x.toLocaleString('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+const fmtN = x => x.toLocaleString('uk-UA', { maximumFractionDigits: 2 });
 const fmtP = x => x.toLocaleString('uk-UA', { maximumFractionDigits: 2 }) + ' %';
 const div = (a, b) => b ? a / b : NaN;
 
@@ -214,17 +211,22 @@ function numInput(value, onChange, opts = {}) {
   i.addEventListener('input', () => { onChange(num(i.value)); save(); update(); });
   return i;
 }
-function fieldRow(container, label, value, onChange, pct) {
+function unitCell(value, onChange, unit) {
+  const w = document.createElement('span'); w.className = 'pct';
+  const s = document.createElement('span'); s.className = 'u'; s.textContent = unit;
+  w.append(numInput(value, onChange), s); return w;
+}
+function fieldRow(container, label, value, onChange, unit) {
   const r = document.createElement('div'); r.className = 'row';
   const l = document.createElement('label'); l.className = 'l'; l.textContent = label;
   const w = document.createElement('span'); w.className = 'pct';
   w.appendChild(numInput(value, onChange));
-  if (pct) { const s = document.createElement('span'); s.textContent = '%'; w.appendChild(s); }
+  if (unit) { const s = document.createElement('span'); s.className = 'u'; s.textContent = unit; w.appendChild(s); }
   r.append(l, w); container.appendChild(r);
 }
-function calcRow(container, label, id, cls = '') {
+function calcRow(container, label, id, cls = '', unit = id.endsWith('-p') ? '%' : 'грн') {
   const r = document.createElement('div'); r.className = 'row ' + cls;
-  r.innerHTML = `<span class="l">${label}</span><span class="val" id="${id}"></span>`;
+  r.innerHTML = `<span class="l">${label}${label.includes(', грн') || label.includes(', %') ? '' : ', ' + unit}</span><span class="val" id="${id}"></span>`;
   container.appendChild(r);
 }
 const set = (id, text) => { $('#' + id).textContent = text; };
@@ -249,23 +251,23 @@ const totalTax = () => S.taxes.reduce((a, e) => a + e.v, 0) / 100;   // П як 
 
 // ---------- build static inputs ----------
 function buildExpenses() {
-  S.expenses.forEach(e => fieldRow($('#exp-list'), e.n, e.v, v => e.v = v));
-  S.taxes.forEach(e => fieldRow($('#tax-list'), e.n, e.v, v => e.v = v, true));
+  S.expenses.forEach(e => fieldRow($('#exp-list'), e.n, e.v, v => e.v = v, 'грн'));
+  S.taxes.forEach(e => fieldRow($('#tax-list'), e.n, e.v, v => e.v = v, '%'));
 }
 
 function buildMatParams() {
   const c = $('#mat-params');
-  fieldRow(c, 'Націнка на загальні витрати, % від собівартості', S.mat.markup, v => S.mat.markup = v, true);
-  fieldRow(c, 'Маржа, % від ціни без податків', S.mat.margin, v => S.mat.margin = v, true);
-  fieldRow(c, 'Округлювати ціну вгору до, грн', S.mat.round, v => S.mat.round = v);
+  fieldRow(c, 'Націнка на загальні витрати, % від собівартості', S.mat.markup, v => S.mat.markup = v, '%');
+  fieldRow(c, 'Маржа, % від ціни без податків', S.mat.margin, v => S.mat.margin = v, '%');
+  fieldRow(c, 'Округлювати ціну вгору до, грн', S.mat.round, v => S.mat.round = v, 'грн');
   calcRow(c, 'П — податки й комісії', 'mat-p');
 }
 function buildMatRows() {
   const tb = $('#mat-body'); tb.innerHTML = '';
   S.mat.rows.forEach((r, i) => {
     const tr = document.createElement('tr');
-    [['p'], ['d'], ['q']].forEach(([k]) => {
-      const td = document.createElement('td'); td.appendChild(numInput(r[k], v => r[k] = v)); tr.appendChild(td);
+    [['p', 'грн'], ['d', 'грн'], ['q', 'шт']].forEach(([k, u]) => {
+      const td = document.createElement('td'); td.appendChild(unitCell(r[k], v => r[k] = v, u)); tr.appendChild(td);
     });
     ['c', 'n', 'm', 'g', 'h'].forEach(k => { const td = document.createElement('td'); td.className = 'num'; td.dataset.k = k; tr.appendChild(td); });
     const td = document.createElement('td');
@@ -284,7 +286,7 @@ function buildCompRows() {
   const tb = $('#comp-body'); tb.innerHTML = '';
   S.comp.rows.forEach((r, i) => {
     const tr = document.createElement('tr');
-    ['c', 'q'].forEach(k => { const td = document.createElement('td'); td.appendChild(numInput(r[k], v => r[k] = v)); tr.appendChild(td); });
+    [['c', 'грн'], ['q', 'шт']].forEach(([k, u]) => { const td = document.createElement('td'); td.appendChild(unitCell(r[k], v => r[k] = v, u)); tr.appendChild(td); });
     const s = document.createElement('td'); s.className = 'num'; s.dataset.k = 's'; tr.appendChild(s);
     const td = document.createElement('td');
     const del = document.createElement('button'); del.className = 'small'; del.textContent = '×';
@@ -300,76 +302,65 @@ function buildCompParams() {
   const c = $('#comp-params'); c.innerHTML = '';
   const m = S.comp;
   calcRow(c, 'Матеріали разом', 'c-mat', 'total');
-  fieldRow(c, 'Дрібні витратні (клей, тейп, губка, дріт) на 1 композицію, грн', m.small, v => m.small = v);
-  fieldRow(c, 'Пакування (коробка, плівка, листівка), грн', m.pack, v => m.pack = v);
-  fieldRow(c, 'Брак і обрізки, % від матеріалів', m.waste, v => m.waste = v, true);
+  fieldRow(c, 'Дрібні витратні (клей, тейп, губка, дріт) на 1 композицію, грн', m.small, v => m.small = v, 'грн');
+  fieldRow(c, 'Пакування (коробка, плівка, листівка), грн', m.pack, v => m.pack = v, 'грн');
+  fieldRow(c, 'Брак і обрізки, % від матеріалів', m.waste, v => m.waste = v, '%');
   calcRow(c, 'М — матеріали з усім', 'c-m', 'total');
-  if (m.mode === 'markup') {
-    fieldRow(c, 'Націнка на загальні витрати, % від собівартості', m.markup, v => m.markup = v, true);
-  } else {
-    fieldRow(c, 'Годин роботи над композиціями за місяць', m.hours, v => m.hours = v);
-    calcRow(c, 'Вартість години (загальні витрати ÷ години)', 'c-hour');
-    fieldRow(c, 'Час на цю композицію, год', m.time, v => m.time = v);
-  }
+  fieldRow(c, 'Ціна за годину роботи, грн', m.rate, v => m.rate = v, 'грн');
+  fieldRow(c, 'Час на цю композицію, год', m.time, v => m.time = v, 'год');
+  calcRow(c, 'Робота = Ціна за годину × Час', 'c-work');
+  calcRow(c, 'Собівартість = М + Робота', 'c-cost', 'total');
+  fieldRow(c, 'Націнка на загальні витрати, % від матеріалів', m.markup, v => m.markup = v, '%');
   calcRow(c, 'Н — загальні витрати на 1 композицію', 'c-n', 'total');
-  fieldRow(c, 'Маржа, % від ціни без податків', m.margin, v => m.margin = v, true);
+  fieldRow(c, 'Маржа, % від ціни без податків', m.margin, v => m.margin = v, '%');
   calcRow(c, 'П — податки й комісії', 'c-p');
-  fieldRow(c, 'Округлювати ціну вгору до, грн', m.round, v => m.round = v);
+  fieldRow(c, 'Округлювати ціну вгору до, грн', m.round, v => m.round = v, 'грн');
+  calcRow(c, 'Ціна без податків = (Собівартість + Н) ÷ (1 − Маржа)', 'c-net');
   calcRow(c, 'Маржа, грн', 'c-marg');
   calcRow(c, 'Ціна з податками й комісіями', 'c-price');
   calcRow(c, 'Ціна округлена', 'c-final', 'final');
   const k = $('#comp-check'); k.innerHTML = '';
-  calcRow(k, 'Матеріали', 'k-mat'); calcRow(k, 'Загальні витрати', 'k-over');
-  calcRow(k, 'Податки й комісії', 'k-tax'); calcRow(k, 'Ваш дохід', 'k-inc', 'total');
+  calcRow(k, 'Матеріали', 'k-mat'); calcRow(k, 'Робота', 'k-work'); calcRow(k, 'Загальні витрати', 'k-over');
+  calcRow(k, 'Податки й комісії', 'k-tax'); calcRow(k, 'Маржа (з урахуванням округлення)', 'k-inc', 'total');
 }
-function setCompMode(mode) {
-  S.comp.mode = mode; save();
-  document.querySelectorAll('#comp-mode button').forEach(b => b.classList.toggle('active', b.dataset.m === mode));
-  $('#comp-hint').textContent = mode === 'markup'
-    ? 'Н = М × Націнка на загальні витрати. Ціна без податків = (М + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П).'
-    : 'Н = Години на композицію × Вартість години. Ціна без податків = (М + Н) ÷ (1 − Маржа). Ціна = Ціна без податків ÷ (1 − П).';
-  buildCompParams(); update();
-}
-document.querySelectorAll('#comp-mode button').forEach(b => b.onclick = () => setCompMode(b.dataset.m));
-
 function buildRent() {
   const R = S.rent;
   const c = $('#rent-common');
-  fieldRow(c, 'Маржа для оренди, % від ціни без податків', R.margin, v => R.margin = v, true);
+  fieldRow(c, 'Маржа для оренди, % від ціни без податків', R.margin, v => R.margin = v, '%');
   calcRow(c, 'П — податки й комісії', 'r-p');
   const a = $('#rent-1');
-  fieldRow(a, 'Вартість композиції, грн', R.cost, v => R.cost = v);
-  fieldRow(a, 'Відсоток на знос (рекомендовано 10–20%)', R.wear, v => R.wear = v, true);
-  fieldRow(a, 'Відсоток на загальні витрати (рекомендовано 5–10%)', R.over, v => R.over = v, true);
+  fieldRow(a, 'Вартість композиції, грн', R.cost, v => R.cost = v, 'грн');
+  fieldRow(a, 'Відсоток на знос (рекомендовано 10–20%)', R.wear, v => R.wear = v, '%');
+  fieldRow(a, 'Відсоток на загальні витрати (рекомендовано 5–10%)', R.over, v => R.over = v, '%');
   calcRow(a, 'База = Вартість × (Знос + Загальні витрати)', 'r1-base');
-  fieldRow(a, 'Округлювати ціну вгору до, грн', R.round1, v => R.round1 = v);
+  fieldRow(a, 'Округлювати ціну вгору до, грн', R.round1, v => R.round1 = v, 'грн');
   calcRow(a, 'Ціна без податків = База ÷ (1 − Маржа)', 'r1-net');
   calcRow(a, 'Маржа, грн', 'r1-marg');
   calcRow(a, 'Ціна оренди з податками й комісіями', 'r1-price');
   calcRow(a, 'Ціна оренди округлена', 'r1-final', 'final');
   calcRow(a, 'Застава (повна вартість композиції)', 'r1-dep', 'total');
   const b = $('#rent-2');
-  fieldRow(b, 'Базова сума за годину, грн', R.base, v => R.base = v);
-  fieldRow(b, 'Додаткова електроенергія за годину, грн', R.power, v => R.power = v);
-  fieldRow(b, 'Додаткові комунальні, прибирання за годину, грн', R.util, v => R.util = v);
+  fieldRow(b, 'Базова сума за годину, грн', R.base, v => R.base = v, 'грн');
+  fieldRow(b, 'Додаткова електроенергія за годину, грн', R.power, v => R.power = v, 'грн');
+  fieldRow(b, 'Додаткові комунальні, прибирання за годину, грн', R.util, v => R.util = v, 'грн', 'грн');
   calcRow(b, 'Разом за годину', 'r2-sum', 'total');
-  fieldRow(b, 'Округлювати ціну вгору до, грн', R.round2, v => R.round2 = v);
+  fieldRow(b, 'Округлювати ціну вгору до, грн', R.round2, v => R.round2 = v, 'грн');
   calcRow(b, 'Ціна без податків = Разом ÷ (1 − Маржа)', 'r2-net');
   calcRow(b, 'Маржа, грн', 'r2-marg');
   calcRow(b, 'Ціна за годину з податками й комісіями', 'r2-price');
   calcRow(b, 'Ціна за годину округлена', 'r2-hour', 'total');
-  fieldRow(b, 'Тривалість фотосесії, год', R.dur, v => R.dur = v);
+  fieldRow(b, 'Тривалість фотосесії, год', R.dur, v => R.dur = v, 'год');
   calcRow(b, 'Ціна фотосесії', 'r2-final', 'final');
 }
 
 // ---------- recalculation ----------
 function update() {
   const P = totalTax(), E = totalExpenses();
-  set('exp-total', fmt(E)); set('tax-total', fmtP(P * 100));
+  set('exp-total', fmt(E)); set('tax-total', fmtN(P * 100));
 
   // Матеріали
   const M = S.mat, mk = M.markup / 100, mg = M.margin / 100;
-  set('mat-p', fmtP(P * 100));
+  set('mat-p', fmtN(P * 100));
   document.querySelectorAll('#mat-body tr').forEach((tr, i) => {
     const r = M.rows[i]; if (!r) return;
     const C = div(r.p + r.d, r.q), N = C * mk, base = C + N;
@@ -386,32 +377,32 @@ function update() {
     const s = r.c * r.q; mats += s; $('[data-k="s"]', tr).textContent = fmt(s);
   });
   const Mw = (mats + C.small + C.pack) * (1 + C.waste / 100);
-  let N;
-  if (C.mode === 'markup') N = Mw * C.markup / 100;
-  else { const hour = div(E, C.hours); set('c-hour', fmt(hour)); N = C.time * hour; }
-  const cm = C.margin / 100, cmarg = (Mw + N) / (1 - cm) - (Mw + N);
-  const cprice = (Mw + N + cmarg) / (1 - P), cfinal = ceil(cprice, C.round);
-  set('c-mat', fmt(mats)); set('c-m', fmt(Mw)); set('c-n', fmt(N)); set('c-p', fmtP(P * 100));
-  set('c-marg', fmt(cmarg)); set('c-price', fmt(cprice)); set('c-final', fmt(cfinal) + ' грн');
-  set('k-mat', fmt(Mw)); set('k-over', fmt(N)); set('k-tax', fmt(cfinal * P));
-  set('k-inc', fmt(cfinal - Mw - N - cfinal * P));
+  const work = C.rate * C.time, cost = Mw + work, N = Mw * C.markup / 100;
+  const cnet = (cost + N) / (1 - C.margin / 100), cmarg = cnet - cost - N;
+  const cprice = cnet / (1 - P), cfinal = ceil(cprice, C.round);
+  set('c-mat', fmt(mats)); set('c-m', fmt(Mw)); set('c-work', fmt(work)); set('c-cost', fmt(cost));
+  set('c-n', fmt(N)); set('c-p', fmtN(P * 100)); set('c-net', fmt(cnet));
+  set('c-marg', fmt(cmarg)); set('c-price', fmt(cprice)); set('c-final', fmt(cfinal));
+  set('k-mat', fmt(Mw)); set('k-work', fmt(work)); set('k-over', fmt(N)); set('k-tax', fmt(cfinal * P));
+  set('k-inc', fmt(cfinal - Mw - work - N - cfinal * P));
 
   // Оренда
   const R = S.rent, rm = R.margin / 100;
-  set('r-p', fmtP(P * 100));
+  set('r-p', fmtN(P * 100));
   const base1 = R.cost * (R.wear + R.over) / 100, net1 = base1 / (1 - rm), price1 = net1 / (1 - P);
   set('r1-base', fmt(base1)); set('r1-net', fmt(net1)); set('r1-marg', fmt(net1 - base1));
-  set('r1-price', fmt(price1)); set('r1-final', fmt(ceil(price1, R.round1)) + ' грн'); set('r1-dep', fmt(R.cost));
+  set('r1-price', fmt(price1)); set('r1-final', fmt(ceil(price1, R.round1))); set('r1-dep', fmt(R.cost));
   const sum2 = R.base + R.power + R.util, net2 = sum2 / (1 - rm), price2 = net2 / (1 - P), hour2 = ceil(price2, R.round2);
   set('r2-sum', fmt(sum2)); set('r2-net', fmt(net2)); set('r2-marg', fmt(net2 - sum2));
-  set('r2-price', fmt(price2)); set('r2-hour', fmt(hour2)); set('r2-final', fmt(hour2 * R.dur) + ' грн');
+  set('r2-price', fmt(price2)); set('r2-hour', fmt(hour2)); set('r2-final', fmt(hour2 * R.dur));
 }
 
 // ---------- PDF (друк у PDF) ----------
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function buildReport() {
   const P = totalTax(), E = totalExpenses(), M = S.mat, C = S.comp, R = S.rent;
-  const kv = rows => '<table>' + rows.map(([k, v, b]) => `<tr><td>${esc(k)}</td><td class="r"${b ? ' style="font-weight:700"' : ''}>${v}</td></tr>`).join('') + '</table>';
+  const withUnit = ([k, v, b]) => [/^[\d\s,\u00a0\u202f-]+$/.test(v) ? k + ', грн' : k, v, b];
+  const kv = rows => '<table>' + rows.map(withUnit).map(([k, v, b]) => `<tr><td>${esc(k)}</td><td class="r"${b ? ' style="font-weight:700"' : ''}>${v}</td></tr>`).join('') + '</table>';
 
   const matRows = M.rows.map((r, i) => {
     const c = div(r.p + r.d, r.q), base = c * (1 + M.markup / 100), mg = M.margin / 100;
@@ -421,8 +412,8 @@ function buildReport() {
 
   const mats = C.rows.reduce((a, r) => a + r.c * r.q, 0);
   const Mw = (mats + C.small + C.pack) * (1 + C.waste / 100);
-  const N = C.mode === 'markup' ? Mw * C.markup / 100 : C.time * div(E, C.hours);
-  const cg = (Mw + N) / (1 - C.margin / 100) / (1 - P), cf = ceil(cg, C.round);
+  const work = C.rate * C.time, N = Mw * C.markup / 100;
+  const cg = (Mw + work + N) / (1 - C.margin / 100) / (1 - P), cf = ceil(cg, C.round);
   const compRows = C.rows.map(r => `<tr><td>${fmt(r.c)}</td><td class="r">${r.q}</td><td class="r">${fmt(r.c * r.q)}</td></tr>`).join('');
 
   const rm = R.margin / 100, b1 = R.cost * (R.wear + R.over) / 100, p1 = b1 / (1 - rm) / (1 - P);
@@ -433,14 +424,15 @@ function buildReport() {
     <h2>Витрати і податки</h2>
     ${kv([['Загальні витрати за місяць', fmt(E)], ['П — податки й комісії разом', fmtP(P * 100)]])}
     <h2>Матеріали (націнка ${fmtP(M.markup)}, маржа ${fmtP(M.margin)})</h2>
-    <table><tr><th>№</th><th class="r">Закупівля</th><th class="r">Доставка</th><th class="r">Шт</th><th class="r">Собівартість 1 шт</th><th class="r">Ціна з податками</th><th class="r">Ціна округлена</th></tr>${matRows}</table>
-    <h2>Композиція: ${esc(C.name)} (${C.mode === 'markup' ? 'витрати за націнкою' : 'витрати за часом роботи'})</h2>
-    <table><tr><th>Собівартість 1 шт</th><th class="r">Використано, шт</th><th class="r">Сума</th></tr>${compRows}</table>
+    <table><tr><th>№</th><th class="r">Закупівля, грн</th><th class="r">Доставка, грн</th><th class="r">Придатних, шт</th><th class="r">Собівартість 1 шт, грн</th><th class="r">Ціна з податками, грн</th><th class="r">Ціна округлена, грн</th></tr>${matRows}</table>
+    <h2>Композиція: ${esc(C.name)}</h2>
+    <table><tr><th>Собівартість 1 шт, грн</th><th class="r">Використано, шт</th><th class="r">Сума, грн</th></tr>${compRows}</table>
     ${kv([
       ['Матеріали разом', fmt(mats)], ['Дрібні витратні', fmt(C.small)], ['Пакування', fmt(C.pack)],
-      ['Брак і обрізки', fmtP(C.waste)], ['М — матеріали з усім', fmt(Mw)], ['Н — загальні витрати', fmt(N)],
+      ['Брак і обрізки', fmtP(C.waste)], ['М — матеріали з усім', fmt(Mw)], ['Робота (' + fmt(C.rate) + ' грн × ' + C.time + ' год)', fmt(work)],
+      ['Н — загальні витрати (' + fmtP(C.markup) + ' від матеріалів)', fmt(N)],
       ['Маржа', fmtP(C.margin)], ['Ціна з податками й комісіями', fmt(cg)], ['Ціна округлена', fmt(cf) + ' грн', true],
-      ['Всередині ціни: податки й комісії', fmt(cf * P)], ['Ваш дохід', fmt(cf - Mw - N - cf * P)]])}
+      ['Всередині ціни: податки й комісії', fmt(cf * P)], ['Маржа (з урахуванням округлення)', fmt(cf - Mw - work - N - cf * P)]])}
     <h2>Оренда (маржа ${fmtP(R.margin)})</h2>
     ${kv([
       ['Оренда композиції з видачею', fmt(ceil(p1, R.round1)) + ' грн', true], ['Застава', fmt(R.cost) + ' грн'],
@@ -464,7 +456,7 @@ $('#theme').onclick = () => {
 // ---------- init ----------
 buildExpenses(); buildMatParams(); buildMatRows(); buildCompRows(); buildRent();
 $('#comp-name').value = S.comp.name;
-setCompMode(S.comp.mode);
+buildCompParams(); update();
 let t = 'expenses'; try { t = sessionStorage.getItem('tab') || t; } catch (e) {}
 showTab(t);
 $('#reset').onclick = e => {
